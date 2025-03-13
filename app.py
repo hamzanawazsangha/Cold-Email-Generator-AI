@@ -6,29 +6,18 @@ from transformers import AutoModel, AutoTokenizer
 from langchain.chains import LLMChain
 from langchain_community.llms import HuggingFaceHub
 from langchain.prompts import PromptTemplate
-import sqlite3
+import chromadb
 
 # Load environment variables
 load_dotenv()
 
-# Function to check SQLite version
-def check_sqlite_version():
-    version = sqlite3.sqlite_version
-    if tuple(map(int, version.split("."))) < (3, 35, 0):
-        st.error(f"SQLite version {version} is outdated. ChromaDB requires SQLite >= 3.35.0. Please upgrade SQLite.")
-        return False
-    return True
-
-# Initialize ChromaDB client safely
-chroma_client = None
-collection = None
-if check_sqlite_version():
-    try:
-        import chromadb
-        chroma_client = chromadb.HttpClient(host="localhost", port=8000)
-        collection = chroma_client.get_or_create_collection(name="portfolio")
-    except Exception as e:
-        st.warning(f"ChromaDB is not available: {e}")
+# Initialize ChromaDB client
+try:
+    chroma_client = chromadb.PersistentClient(path="./chroma_db")  # Using persistent storage
+    collection = chroma_client.get_or_create_collection(name="portfolio")
+except Exception as e:
+    st.warning(f"ChromaDB is not available: {e}")
+    collection = None
 
 # Load MiniLM model and tokenizer only when needed (Lazy Loading)
 @st.cache_resource
