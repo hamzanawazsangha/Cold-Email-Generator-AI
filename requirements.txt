@@ -7,4 +7,3 @@ torch
 python-dotenv
 huggingface_hub
 pysqlite3-binary
-pysqlite3
