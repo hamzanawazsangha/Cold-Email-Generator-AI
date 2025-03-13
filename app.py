@@ -6,13 +6,13 @@ from transformers import AutoModel, AutoTokenizer
 from langchain.chains import LLMChain
 from langchain_community.llms import HuggingFaceHub
 from langchain.prompts import PromptTemplate
+import sqlite3
 
 # Load environment variables
 load_dotenv()
 
 # Function to check SQLite version
 def check_sqlite_version():
-    import sqlite3
     version = sqlite3.sqlite_version
     if tuple(map(int, version.split("."))) < (3, 35, 0):
         st.error(f"SQLite version {version} is outdated. ChromaDB requires SQLite >= 3.35.0. Please upgrade SQLite.")
