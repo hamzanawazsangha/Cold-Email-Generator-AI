@@ -1,4 +1,5 @@
 import streamlit as st
+import sys
 import os
 import torch
 from dotenv import load_dotenv
@@ -6,6 +7,16 @@ from transformers import AutoModel, AutoTokenizer
 from langchain.chains import LLMChain
 from langchain_community.llms import HuggingFaceHub
 from langchain.prompts import PromptTemplate
+
+# Override SQLite3 for ChromaDB compatibility on Streamlit Cloud
+os.environ["PYTHON_SQLITE_LIBRARY"] = "pysqlite3"
+
+try:
+    import pysqlite3
+    sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
+except ImportError:
+    st.warning("pysqlite3 is not installed. ChromaDB may not work.")
+
 import chromadb
 
 # Load environment variables
