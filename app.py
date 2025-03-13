@@ -1,30 +1,46 @@
 import streamlit as st
-import chromadb
+import os
+import torch
+from dotenv import load_dotenv
+from transformers import AutoModel, AutoTokenizer
 from langchain.chains import LLMChain
 from langchain_community.llms import HuggingFaceHub
 from langchain.prompts import PromptTemplate
-from dotenv import load_dotenv
-import os
-import torch
-from transformers import AutoModel, AutoTokenizer
 
 # Load environment variables
 load_dotenv()
 
-# Load MiniLM model and tokenizer from local folder
-model_path = "./all-MiniLM-L6-v2"
-tokenizer = AutoTokenizer.from_pretrained(model_path)
-model = AutoModel.from_pretrained(model_path)
+# Function to check SQLite version
+def check_sqlite_version():
+    import sqlite3
+    version = sqlite3.sqlite_version
+    if tuple(map(int, version.split("."))) < (3, 35, 0):
+        st.error(f"SQLite version {version} is outdated. ChromaDB requires SQLite >= 3.35.0. Please upgrade SQLite.")
+        return False
+    return True
 
-# Initialize ChromaDB client
-try:
-    chroma_client = chromadb.HttpClient(host="localhost", port=8000)
-    collection = chroma_client.get_or_create_collection(name="portfolio")
-except Exception as e:
-    st.error(f"Error connecting to ChromaDB: {e}")
+# Initialize ChromaDB client safely
+chroma_client = None
+collection = None
+if check_sqlite_version():
+    try:
+        import chromadb
+        chroma_client = chromadb.HttpClient(host="localhost", port=8000)
+        collection = chroma_client.get_or_create_collection(name="portfolio")
+    except Exception as e:
+        st.warning(f"ChromaDB is not available: {e}")
+
+# Load MiniLM model and tokenizer only when needed (Lazy Loading)
+@st.cache_resource
+def load_minilm_model():
+    model_path = "./all-MiniLM-L6-v2"
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    model = AutoModel.from_pretrained(model_path)
+    return model, tokenizer
 
 # Function to get embeddings using MiniLM
 def get_embedding(text):
+    model, tokenizer = load_minilm_model()
     inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
     with torch.no_grad():
         outputs = model(**inputs)
@@ -33,6 +49,9 @@ def get_embedding(text):
 
 # Function to query ChromaDB
 def query_chromadb(query_text):
+    if not collection:
+        return "ChromaDB is not available."
+    
     try:
         query_embedding = get_embedding(query_text)
         results = collection.query(query_embeddings=[query_embedding], n_results=1)
@@ -62,7 +81,7 @@ def generate_email(job_desc, candidate_details):
         The email should be well-structured, engaging, and should include candidate details at the bottom of the email in a professional manner.
         """
     )
-    
+
     api_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
     if not api_token:
         return "Hugging Face API token is missing. Set HUGGINGFACEHUB_API_TOKEN in your environment variables."
