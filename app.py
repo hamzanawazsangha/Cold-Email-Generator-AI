@@ -88,8 +88,8 @@ def generate_email(job_desc, candidate_details):
     
     try:
         llm = HuggingFaceHub(
-            repo_id="mistralai/Mistral-7B-Instruct-v0.3",
-            model_kwargs={"temperature": 0.7},
+            repo_id="google/flan-t5-small",  # Switched to a smaller model
+            model_kwargs={"temperature": 0.3, "max_length": 200},  # Further reduced temperature and max length
             huggingfacehub_api_token=api_token
         )
         chain = LLMChain(llm=llm, prompt=template)
