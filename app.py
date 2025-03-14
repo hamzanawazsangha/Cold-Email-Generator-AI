@@ -1,45 +1,50 @@
 import streamlit as st
-import sys
+import chromadb
+from langchain.chains import LLMChain
+from langchain_community.llms import HuggingFaceHub
+from langchain.prompts import PromptTemplate
+from dotenv import load_dotenv
 import os
 import torch
-from dotenv import load_dotenv
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from langchain.chains import LLMChain
-from langchain.prompts import PromptTemplate
-
-# Override SQLite3 for ChromaDB compatibility on Streamlit Cloud
-os.environ["PYTHON_SQLITE_LIBRARY"] = "pysqlite3"
-
-try:
-    import pysqlite3
-    sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
-except ImportError:
-    st.warning("pysqlite3 is not installed. ChromaDB may not work.")
-
-import chromadb
+from transformers import AutoModel, AutoTokenizer
+from chromadb import PersistentClient
 
 # Load environment variables
 load_dotenv()
 
+# Load MiniLM model and tokenizer from local folder
+model_path = "./all-MiniLM-L6-v2"
+tokenizer = AutoTokenizer.from_pretrained(model_path)
+model = AutoModel.from_pretrained(model_path)
+
 # Initialize ChromaDB client
 try:
-    chroma_client = chromadb.PersistentClient(path="./chroma_db")  # Using persistent storage
+    chroma_client = PersistentClient(path="./chroma_db") 
     collection = chroma_client.get_or_create_collection(name="portfolio")
 except Exception as e:
-    st.warning(f"ChromaDB is not available: {e}")
-    collection = None
+    st.error(f"Error connecting to ChromaDB: {e}")
 
-# Load Mistral-7B model and tokenizer from local directory
-@st.cache_resource
-def load_mistral_model():
-    model_path = "./models\models--TinyLlama--TinyLlama-1.1B-Chat-v1.0"  # Change to your local model path
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.float16, device_map="auto")
-    return model, tokenizer
+# Function to get embeddings using MiniLM
+def get_embedding(text):
+    inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
+    with torch.no_grad():
+        outputs = model(**inputs)
+    embeddings = outputs.last_hidden_state.mean(dim=1).squeeze().tolist()  # Mean pooling
+    return embeddings
 
-# Function to generate email using locally stored model
+# Function to query ChromaDB
+def query_chromadb(query_text):
+    try:
+        query_embedding = get_embedding(query_text)
+        results = collection.query(query_embeddings=[query_embedding], n_results=1)
+        if results.get("documents"):
+            return results["documents"][0]
+        return "No relevant data found."
+    except Exception as e:
+        return f"Error querying ChromaDB: {e}"
+
+# Function to generate email using LangChain
 def generate_email(job_desc, candidate_details):
-    model, tokenizer = load_mistral_model()
     template = PromptTemplate.from_template(
         """
         Write a professional and personalized cold email for a job application.
@@ -58,14 +63,22 @@ def generate_email(job_desc, candidate_details):
         The email should be well-structured, engaging, and should include candidate details at the bottom of the email in a professional manner.
         """
     )
-
-    prompt = template.format(job_desc=job_desc, **candidate_details)
-    inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True, max_length=512).to("cuda")
-    with torch.no_grad():
-        outputs = model.generate(**inputs, max_length=300, temperature=0.3)
     
-    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    return response
+    api_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+    if not api_token:
+        return "Hugging Face API token is missing. Set HUGGINGFACEHUB_API_TOKEN in your environment variables."
+    
+    try:
+        llm = HuggingFaceHub(
+            repo_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+            model_kwargs={"temperature": 0.7},
+            huggingfacehub_api_token=api_token
+        )
+        chain = LLMChain(llm=llm, prompt=template)
+        response = chain.run(job_desc=job_desc, **candidate_details)
+        return response
+    except Exception as e:
+        return f"Error generating email: {e}"
 
 # Streamlit UI
 def main():
