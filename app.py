@@ -2,11 +2,19 @@ import streamlit as st
 import sys
 import os
 import torch
+import asyncio
 from dotenv import load_dotenv
 from transformers import AutoModel, AutoTokenizer
 from langchain.chains import LLMChain
 from langchain_community.llms import HuggingFaceHub
 from langchain.prompts import PromptTemplate
+import chromadb
+
+# Ensure asyncio event loop compatibility
+try:
+    asyncio.get_running_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
 
 # Override SQLite3 for ChromaDB compatibility on Streamlit Cloud
 os.environ["PYTHON_SQLITE_LIBRARY"] = "pysqlite3"
@@ -17,20 +25,22 @@ try:
 except ImportError:
     st.warning("pysqlite3 is not installed. ChromaDB may not work.")
 
-import chromadb
-
 # Load environment variables
 load_dotenv()
 
 # Initialize ChromaDB client
-try:
-    chroma_client = chromadb.PersistentClient(path="./chroma_db")  # Using persistent storage
-    collection = chroma_client.get_or_create_collection(name="portfolio")
-except Exception as e:
-    st.warning(f"ChromaDB is not available: {e}")
-    collection = None
+@st.cache_resource
+def get_chromadb_client():
+    try:
+        client = chromadb.PersistentClient(path="./chroma_db")
+        return client.get_or_create_collection(name="portfolio")
+    except Exception as e:
+        st.warning(f"ChromaDB is not available: {e}")
+        return None
 
-# Load MiniLM model and tokenizer only when needed (Lazy Loading)
+collection = get_chromadb_client()
+
+# Lazy loading of MiniLM model and tokenizer
 @st.cache_resource
 def load_minilm_model():
     model_path = "./all-MiniLM-L6-v2"
@@ -38,30 +48,26 @@ def load_minilm_model():
     model = AutoModel.from_pretrained(model_path)
     return model, tokenizer
 
-# Function to get embeddings using MiniLM
+# Function to get embeddings
 def get_embedding(text):
     model, tokenizer = load_minilm_model()
     inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
     with torch.no_grad():
         outputs = model(**inputs)
-    embeddings = outputs.last_hidden_state.mean(dim=1).squeeze().tolist()  # Mean pooling
-    return embeddings
+    return outputs.last_hidden_state.mean(dim=1).squeeze().tolist()
 
-# Function to query ChromaDB
+# Query ChromaDB
 def query_chromadb(query_text):
     if not collection:
         return "ChromaDB is not available."
-    
     try:
         query_embedding = get_embedding(query_text)
         results = collection.query(query_embeddings=[query_embedding], n_results=1)
-        if results.get("documents"):
-            return results["documents"][0]
-        return "No relevant data found."
+        return results.get("documents", ["No relevant data found."])[0]
     except Exception as e:
         return f"Error querying ChromaDB: {e}"
 
-# Function to generate email using LangChain
+# Generate email using LangChain
 def generate_email(job_desc, candidate_details):
     template = PromptTemplate.from_template(
         """
@@ -78,7 +84,6 @@ def generate_email(job_desc, candidate_details):
         Skills: {skills}
         
         Job Description: {job_desc}
-        The email should be well-structured, engaging, and should include candidate details at the bottom of the email in a professional manner.
         """
     )
 
@@ -88,13 +93,12 @@ def generate_email(job_desc, candidate_details):
     
     try:
         llm = HuggingFaceHub(
-            repo_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # Switched to a smaller model
-            model_kwargs={"temperature": 0.3, "max_length": 200},  # Further reduced temperature and max length
+            repo_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+            model_kwargs={"temperature": 0.3, "max_length": 200},
             huggingfacehub_api_token=api_token
         )
         chain = LLMChain(llm=llm, prompt=template)
-        response = chain.run(job_desc=job_desc, **candidate_details)
-        return response
+        return chain.run(job_desc=job_desc, **candidate_details)
     except Exception as e:
         return f"Error generating email: {e}"
 
@@ -105,30 +109,21 @@ def main():
     job_description = st.text_area("Enter the Job Description:")
     
     st.subheader("Candidate Details")
-    name = st.text_input("Full Name")
-    email = st.text_input("Email")
-    phone = st.text_input("Phone Number")
-    address = st.text_input("Address")
-    linkedin = st.text_input("LinkedIn (Optional)")
-    github = st.text_input("GitHub (Optional)")
-    education = st.text_area("Education Details")
-    experience = st.text_area("Work Experience")
-    skills = st.text_area("Key Skills")
-    
     candidate_details = {
-        "name": name,
-        "email": email,
-        "phone": phone,
-        "address": address,
-        "linkedin": linkedin,
-        "github": github,
-        "education": education,
-        "experience": experience,
-        "skills": skills,
+        "name": st.text_input("Full Name"),
+        "email": st.text_input("Email"),
+        "phone": st.text_input("Phone Number"),
+        "address": st.text_input("Address"),
+        "linkedin": st.text_input("LinkedIn (Optional)"),
+        "github": st.text_input("GitHub (Optional)"),
+        "education": st.text_area("Education Details"),
+        "experience": st.text_area("Work Experience"),
+        "skills": st.text_area("Key Skills"),
     }
     
     if st.button("Generate Email"):
-        if job_description and name and email and phone and education and experience and skills:
+        required_fields = ["name", "email", "phone", "education", "experience", "skills"]
+        if job_description and all(candidate_details[field] for field in required_fields):
             email_content = generate_email(job_description, candidate_details)
             st.subheader("Generated Email:")
             st.write(email_content)
