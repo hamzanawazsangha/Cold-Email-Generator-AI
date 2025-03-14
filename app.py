@@ -3,9 +3,8 @@ import sys
 import os
 import torch
 from dotenv import load_dotenv
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from langchain.chains import LLMChain
-from langchain_community.llms import HuggingFaceHub
 from langchain.prompts import PromptTemplate
 
 # Override SQLite3 for ChromaDB compatibility on Streamlit Cloud
@@ -30,39 +29,17 @@ except Exception as e:
     st.warning(f"ChromaDB is not available: {e}")
     collection = None
 
-# Load MiniLM model and tokenizer only when needed (Lazy Loading)
+# Load Mistral-7B model and tokenizer from local directory
 @st.cache_resource
-def load_minilm_model():
-    model_path = "./all-MiniLM-L6-v2"
+def load_mistral_model():
+    model_path = "./models\models--TinyLlama--TinyLlama-1.1B-Chat-v1.0"  # Change to your local model path
     tokenizer = AutoTokenizer.from_pretrained(model_path)
-    model = AutoModel.from_pretrained(model_path)
+    model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.float16, device_map="auto")
     return model, tokenizer
 
-# Function to get embeddings using MiniLM
-def get_embedding(text):
-    model, tokenizer = load_minilm_model()
-    inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
-    with torch.no_grad():
-        outputs = model(**inputs)
-    embeddings = outputs.last_hidden_state.mean(dim=1).squeeze().tolist()  # Mean pooling
-    return embeddings
-
-# Function to query ChromaDB
-def query_chromadb(query_text):
-    if not collection:
-        return "ChromaDB is not available."
-    
-    try:
-        query_embedding = get_embedding(query_text)
-        results = collection.query(query_embeddings=[query_embedding], n_results=1)
-        if results.get("documents"):
-            return results["documents"][0]
-        return "No relevant data found."
-    except Exception as e:
-        return f"Error querying ChromaDB: {e}"
-
-# Function to generate email using LangChain
+# Function to generate email using locally stored model
 def generate_email(job_desc, candidate_details):
+    model, tokenizer = load_mistral_model()
     template = PromptTemplate.from_template(
         """
         Write a professional and personalized cold email for a job application.
@@ -82,21 +59,13 @@ def generate_email(job_desc, candidate_details):
         """
     )
 
-    api_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
-    if not api_token:
-        return "Hugging Face API token is missing. Set HUGGINGFACEHUB_API_TOKEN in your environment variables."
+    prompt = template.format(job_desc=job_desc, **candidate_details)
+    inputs = tokenizer(prompt, return_tensors="pt", padding=True, truncation=True, max_length=512).to("cuda")
+    with torch.no_grad():
+        outputs = model.generate(**inputs, max_length=300, temperature=0.3)
     
-    try:
-        llm = HuggingFaceHub(
-            repo_id="mistralai/Mistral-7B-v0.1",  # Switched to a smaller model
-            model_kwargs={"temperature": 0.3, "max_length": 200},  # Further reduced temperature and max length
-            huggingfacehub_api_token=api_token
-        )
-        chain = LLMChain(llm=llm, prompt=template)
-        response = chain.run(job_desc=job_desc, **candidate_details)
-        return response
-    except Exception as e:
-        return f"Error generating email: {e}"
+    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    return response
 
 # Streamlit UI
 def main():
