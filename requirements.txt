@@ -7,3 +7,4 @@ torch
 python-dotenv
 huggingface_hub
 pysqlite3-binary==0.5.1
+watchdog
