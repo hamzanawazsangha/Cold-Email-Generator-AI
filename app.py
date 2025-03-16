@@ -2,63 +2,45 @@ import streamlit as st
 import sys
 import os
 import torch
-import logging
-import asyncio
 from dotenv import load_dotenv
 from transformers import AutoModel, AutoTokenizer
 from langchain.chains import LLMChain
 from langchain_community.llms import HuggingFaceHub
 from langchain.prompts import PromptTemplate
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Override SQLite3 for ChromaDB compatibility on Streamlit Cloud
+os.environ["PYTHON_SQLITE_LIBRARY"] = "pysqlite3"
+
+try:
+    import pysqlite3
+    sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
+except ImportError:
+    st.warning("pysqlite3 is not installed. ChromaDB may not work.")
+
+import chromadb
 
 # Load environment variables
 load_dotenv()
 
-# Handle missing event loop issue
+# Initialize ChromaDB client
 try:
-    asyncio.get_running_loop()
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
-
-# Attempt to initialize ChromaDB safely
-collection = None
-try:
-    import chromadb
-
-    def get_chroma_client():
-        return chromadb.PersistentClient(path="./chroma_db")
-
-    chroma_client = get_chroma_client()
+    chroma_client = chromadb.PersistentClient(path="./chroma_db")  # Using persistent storage
     collection = chroma_client.get_or_create_collection(name="portfolio")
-
-except AttributeError as e:
-    logger.error("ChromaDB initialization failed due to missing attributes. Try updating chromadb.")
-    st.warning("ChromaDB encountered an issue. Try reinstalling it using `pip install --upgrade chromadb`.")
-
 except Exception as e:
-    logger.error(f"ChromaDB initialization failed: {e}")
-    st.warning("ChromaDB is not available. Search functionality may be limited.")
+    st.warning(f"ChromaDB is not available: {e}")
+    collection = None
 
-# Load MiniLM model lazily
+# Load MiniLM model and tokenizer only when needed (Lazy Loading)
 @st.cache_resource
 def load_minilm_model():
-    model_path = "sentence-transformers/all-MiniLM-L6-v2"
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
-        model = AutoModel.from_pretrained(model_path)
-        return model, tokenizer
-    except Exception as e:
-        logger.error(f"Error loading MiniLM model: {e}")
-        return None, None
+    model_path = "./all-MiniLM-L6-v2"
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    model = AutoModel.from_pretrained(model_path)
+    return model, tokenizer
 
 # Function to get embeddings using MiniLM
 def get_embedding(text):
     model, tokenizer = load_minilm_model()
-    if model is None or tokenizer is None:
-        return None
     inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
     with torch.no_grad():
         outputs = model(**inputs)
@@ -69,16 +51,14 @@ def get_embedding(text):
 def query_chromadb(query_text):
     if not collection:
         return "ChromaDB is not available."
+    
     try:
         query_embedding = get_embedding(query_text)
-        if query_embedding is None:
-            return "Embedding model not loaded."
         results = collection.query(query_embeddings=[query_embedding], n_results=1)
         if results.get("documents"):
             return results["documents"][0]
         return "No relevant data found."
     except Exception as e:
-        logger.error(f"Error querying ChromaDB: {e}")
         return f"Error querying ChromaDB: {e}"
 
 # Function to generate email using LangChain
@@ -105,26 +85,25 @@ def generate_email(job_desc, candidate_details):
     api_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
     if not api_token:
         return "Hugging Face API token is missing. Set HUGGINGFACEHUB_API_TOKEN in your environment variables."
-
+    
     try:
         llm = HuggingFaceHub(
-            repo_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-            model_kwargs={"temperature": 0.3, "max_length": 200},
+            repo_id="mistralai/Mistral-7B-Instruct-v0.3",
+            model_kwargs={"temperature": 0.7},
             huggingfacehub_api_token=api_token
         )
         chain = LLMChain(llm=llm, prompt=template)
         response = chain.run(job_desc=job_desc, **candidate_details)
         return response
     except Exception as e:
-        logger.error(f"Error generating email: {e}")
         return f"Error generating email: {e}"
 
 # Streamlit UI
 def main():
     st.title("AI-Powered Cold Email Generator")
-
+    
     job_description = st.text_area("Enter the Job Description:")
-
+    
     st.subheader("Candidate Details")
     name = st.text_input("Full Name")
     email = st.text_input("Email")
@@ -135,7 +114,7 @@ def main():
     education = st.text_area("Education Details")
     experience = st.text_area("Work Experience")
     skills = st.text_area("Key Skills")
-
+    
     candidate_details = {
         "name": name,
         "email": email,
@@ -147,14 +126,14 @@ def main():
         "experience": experience,
         "skills": skills,
     }
-
+    
     if st.button("Generate Email"):
         if job_description and name and email and phone and education and experience and skills:
             email_content = generate_email(job_description, candidate_details)
             st.subheader("Generated Email:")
             st.write(email_content)
         else:
-            st.warning("Please fill in all required fields.")
+            st.warning("Please fill in all required fields (Job Description, Name, Email, Phone, Education, Experience, and Skills).")
 
 if __name__ == "__main__":
     main()
