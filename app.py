@@ -1,4 +1,3 @@
-import subprocess
 import streamlit as st
 import chromadb
 from langchain.chains import LLMChain
@@ -8,16 +7,14 @@ from dotenv import load_dotenv
 import os
 import torch
 from transformers import AutoModel, AutoTokenizer
-import asyncio
 
-# Force install pysqlite3-binary
-subprocess.run(["pip", "install", "pysqlite3-binary"], check=True)
-
-# Ensure an asyncio event loop is running
+# Ensure pysqlite3 is installed
 try:
-    asyncio.get_running_loop()
-except RuntimeError:
-    asyncio.run(asyncio.sleep(0))  # Ensures a running event loop
+    import pysqlite3
+    import sys
+    sys.modules["sqlite3"] = pysqlite3
+except ImportError:
+    os.system("pip install pysqlite3-binary")
 
 # Load environment variables
 load_dotenv()
@@ -27,12 +24,12 @@ model_path = "./all-MiniLM-L6-v2"
 tokenizer = AutoTokenizer.from_pretrained(model_path)
 model = AutoModel.from_pretrained(model_path)
 
-# Initialize ChromaDB client
+# Initialize ChromaDB client (Using PersistentClient instead of HttpClient)
 try:
-    chroma_client = chromadb.HttpClient(host="localhost", port=8000)
+    chroma_client = chromadb.PersistentClient(path="./chroma_db")  # Local storage
     collection = chroma_client.get_or_create_collection(name="portfolio")
 except Exception as e:
-    st.error(f"Error connecting to ChromaDB: {e}")
+    st.error(f"Error initializing ChromaDB: {e}")
 
 # Function to get embeddings using MiniLM
 def get_embedding(text):
