@@ -1,46 +1,34 @@
 import streamlit as st
-import sys
-import os
-import torch
-from dotenv import load_dotenv
-from transformers import AutoModel, AutoTokenizer
+import chromadb
 from langchain.chains import LLMChain
 from langchain_community.llms import HuggingFaceHub
 from langchain.prompts import PromptTemplate
+from dotenv import load_dotenv
+import os
+import torch
+from transformers import AutoModel, AutoTokenizer
+import subprocess
 
-# Override SQLite3 for ChromaDB compatibility on Streamlit Cloud
-os.environ["PYTHON_SQLITE_LIBRARY"] = "pysqlite3"
-
-try:
-    import pysqlite3
-    sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
-except ImportError:
-    st.warning("pysqlite3 is not installed. ChromaDB may not work.")
-
-import chromadb
+# Forcefully install pysqlite
+subprocess.run(["pip", "install", "pysqlite3-binary"], check=True)
 
 # Load environment variables
 load_dotenv()
 
+# Load MiniLM model and tokenizer from local folder
+model_path = "./all-MiniLM-L6-v2"
+tokenizer = AutoTokenizer.from_pretrained(model_path)
+model = AutoModel.from_pretrained(model_path)
+
 # Initialize ChromaDB client
 try:
-    chroma_client = chromadb.PersistentClient(path="./chroma_db")  # Using persistent storage
+    chroma_client = chromadb.HttpClient(host="localhost", port=8000)
     collection = chroma_client.get_or_create_collection(name="portfolio")
 except Exception as e:
-    st.warning(f"ChromaDB is not available: {e}")
-    collection = None
-
-# Load MiniLM model and tokenizer only when needed (Lazy Loading)
-@st.cache_resource
-def load_minilm_model():
-    model_path = "./all-MiniLM-L6-v2"
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    model = AutoModel.from_pretrained(model_path)
-    return model, tokenizer
+    st.error(f"Error connecting to ChromaDB: {e}")
 
 # Function to get embeddings using MiniLM
 def get_embedding(text):
-    model, tokenizer = load_minilm_model()
     inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
     with torch.no_grad():
         outputs = model(**inputs)
@@ -49,9 +37,6 @@ def get_embedding(text):
 
 # Function to query ChromaDB
 def query_chromadb(query_text):
-    if not collection:
-        return "ChromaDB is not available."
-    
     try:
         query_embedding = get_embedding(query_text)
         results = collection.query(query_embeddings=[query_embedding], n_results=1)
@@ -81,7 +66,7 @@ def generate_email(job_desc, candidate_details):
         The email should be well-structured, engaging, and should include candidate details at the bottom of the email in a professional manner.
         """
     )
-
+    
     api_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
     if not api_token:
         return "Hugging Face API token is missing. Set HUGGINGFACEHUB_API_TOKEN in your environment variables."
