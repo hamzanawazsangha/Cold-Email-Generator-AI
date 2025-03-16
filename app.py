@@ -1,3 +1,4 @@
+import subprocess
 import streamlit as st
 import chromadb
 from langchain.chains import LLMChain
@@ -7,10 +8,16 @@ from dotenv import load_dotenv
 import os
 import torch
 from transformers import AutoModel, AutoTokenizer
-import subprocess
+import asyncio
 
-# Forcefully install pysqlite
+# Force install pysqlite3-binary
 subprocess.run(["pip", "install", "pysqlite3-binary"], check=True)
+
+# Ensure an asyncio event loop is running
+try:
+    asyncio.get_running_loop()
+except RuntimeError:
+    asyncio.run(asyncio.sleep(0))  # Ensures a running event loop
 
 # Load environment variables
 load_dotenv()
