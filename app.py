@@ -37,13 +37,23 @@ def ensure_model_downloaded():
 # Load MiniLM model and tokenizer from local folder
 @st.cache_resource
 def load_model():
-    model_path = ensure_model_downloaded()
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    model = AutoModel.from_pretrained(model_path)
+    model_name = "sentence-transformers/all-MiniLM-L6-v2"
+    model_path = "./all-MiniLM-L6-v2"
+
+    # If the model is not downloaded locally, fetch from Hugging Face
+    if not os.path.exists(model_path):
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModel.from_pretrained(model_name)
+        tokenizer.save_pretrained(model_path)
+        model.save_pretrained(model_path)
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
+        model = AutoModel.from_pretrained(model_path)
+
     return tokenizer, model
 
+# Load model and tokenizer
 tokenizer, model = load_model()
-
 # Move model to GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
