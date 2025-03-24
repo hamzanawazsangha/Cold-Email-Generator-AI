@@ -16,7 +16,7 @@ HUGGINGFACE_API_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 # Load MiniLM model and tokenizer from local folder
 @st.cache_resource
 def load_model():
-    model_path = "./all-MiniLM-L6-v2"
+    model_path = os.path.abspath("./all-MiniLM-L6-v2")  # Convert to absolute path
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     model = AutoModel.from_pretrained(model_path)
     return tokenizer, model
