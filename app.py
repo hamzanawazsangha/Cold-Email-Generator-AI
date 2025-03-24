@@ -15,20 +15,20 @@ load_dotenv()
 model_name = "sentence-transformers/all-MiniLM-L6-v2"
 try:
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModel.from_pretrained(model_name)
-    model.to(torch.device("cpu"))  # Ensure it runs on CPU for Render
+    model = AutoModel.from_pretrained(model_name, torch_dtype=torch.float16)
+    model.to(torch.device("cpu"))  # Ensure CPU usage for Render
 except Exception as e:
-    st.error(f"Error loading MiniLM model: {e}")
+    st.error(f"❌ Error loading MiniLM model: {e}")
 
 # Initialize ChromaDB client
 collection = None
 try:
-    db_path = "./chroma_db"
+    db_path = "/tmp/chroma_db"  # Change to /tmp for Render
     os.makedirs(db_path, exist_ok=True)
     chroma_client = chromadb.PersistentClient(path=db_path)
     collection = chroma_client.get_or_create_collection(name="portfolio")
 except Exception as e:
-    st.warning(f"Could not connect to ChromaDB: {e}")
+    st.warning(f"⚠️ Could not connect to ChromaDB: {e}")
 
 # Function to get embeddings using MiniLM
 def get_embedding(text):
@@ -40,13 +40,16 @@ def get_embedding(text):
 # Function to query ChromaDB
 def query_chromadb(query_text):
     if collection is None:
-        return "ChromaDB is not available."
+        return "⚠️ ChromaDB is not available."
     try:
         query_embedding = get_embedding(query_text)
         results = collection.query(query_embeddings=[query_embedding], n_results=1)
-        return results["documents"][0] if results.get("documents") else "No relevant data found."
+        
+        if results and results.get("documents") and results["documents"][0]:  # Extra safety check
+            return results["documents"][0]
+        return "❌ No relevant data found."
     except Exception as e:
-        return f"Error querying ChromaDB: {e}"
+        return f"⚠️ Error querying ChromaDB: {e}"
 
 # Function to generate email using LangChain
 def generate_email(job_desc, candidate_details):
@@ -71,7 +74,8 @@ def generate_email(job_desc, candidate_details):
     
     api_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
     if not api_token:
-        return "Hugging Face API token is missing. Set HUGGINGFACEHUB_API_TOKEN in your environment variables."
+        st.error("❌ Missing Hugging Face API Token. Set `HUGGINGFACEHUB_API_TOKEN` in environment variables.")
+        return "API token missing."
     
     try:
         llm = HuggingFaceHub(
@@ -82,15 +86,15 @@ def generate_email(job_desc, candidate_details):
         chain = LLMChain(llm=llm, prompt=template)
         return chain.run(job_desc=job_desc, **candidate_details)
     except Exception as e:
-        return f"Error generating email: {e}"
+        return f"⚠️ Error generating email: {e}"
 
 # Streamlit UI
 def main():
-    st.title("AI-Powered Cold Email Generator")
+    st.title("🚀 AI-Powered Cold Email Generator")
     
     job_description = st.text_area("Enter the Job Description:")
     
-    st.subheader("Candidate Details")
+    st.subheader("📌 Candidate Details")
     name = st.text_input("Full Name")
     email = st.text_input("Email")
     phone = st.text_input("Phone Number")
@@ -113,13 +117,13 @@ def main():
         "skills": skills,
     }
     
-    if st.button("Generate Email"):
+    if st.button("✨ Generate Email"):
         if job_description and name and email and phone and education and experience and skills:
             email_content = generate_email(job_description, candidate_details)
-            st.subheader("Generated Email:")
+            st.subheader("📩 Generated Email:")
             st.write(email_content)
         else:
-            st.warning("Please fill in all required fields (Job Description, Name, Email, Phone, Education, Experience, and Skills).")
+            st.warning("⚠️ Please fill in all required fields (Job Description, Name, Email, Phone, Education, Experience, and Skills).")
 
 if __name__ == "__main__":
     main()
