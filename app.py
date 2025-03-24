@@ -1,129 +1,177 @@
 import streamlit as st
 import chromadb
 from langchain.chains import LLMChain
-from langchain_community.llms import HuggingFaceHub
+from langchain_community.llms import HuggingFacePipeline
 from langchain.prompts import PromptTemplate
-from dotenv import load_dotenv
-import os
+from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 import torch
-from transformers import AutoModel, AutoTokenizer
+import os
+from typing import Dict, Any
 
-# Load environment variables
-load_dotenv()
+# Constants
+CHROMA_DB_PATH = "/tmp/chroma_db"
+LLM_MODEL_NAME = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 
-# Load MiniLM model and tokenizer from Hugging Face
-model_name = "sentence-transformers/all-MiniLM-L6-v2"
-try:
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModel.from_pretrained(model_name, torch_dtype=torch.float16)
-    model.to(torch.device("cpu"))  # Ensure CPU usage for Render
-except Exception as e:
-    st.error(f"❌ Error loading MiniLM model: {e}")
+# Initialize session state
+if 'model_loaded' not in st.session_state:
+    st.session_state.model_loaded = False
 
-# Initialize ChromaDB client
-collection = None
-try:
-    db_path = "/tmp/chroma_db"  # Change to /tmp for Render
-    os.makedirs(db_path, exist_ok=True)
-    chroma_client = chromadb.PersistentClient(path=db_path)
-    collection = chroma_client.get_or_create_collection(name="portfolio")
-except Exception as e:
-    st.warning(f"⚠️ Could not connect to ChromaDB: {e}")
+@st.cache_resource(show_spinner="Loading GPT-2 model...")
+def load_llm_model():
+    """Load and cache the GPT-2 model and tokenizer"""
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(LLM_MODEL_NAME)
+        model = AutoModelForCausalLM.from_pretrained(LLM_MODEL_NAME)
+        pipe = pipeline(
+            "text-generation",
+            model=model,
+            tokenizer=tokenizer,
+            max_new_tokens=300,  # Keeps emails concise
+            temperature=0.7,
+            top_p=0.9,
+            device="cpu"  # Render-compatible
+        )
+        llm = HuggingFacePipeline(pipeline=pipe)
+        st.session_state.model_loaded = True
+        return llm
+    except Exception as e:
+        st.error(f"❌ Error loading GPT-2 model: {e}")
+        st.stop()
 
-# Function to get embeddings using MiniLM
-def get_embedding(text):
-    inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
-    with torch.no_grad():
-        outputs = model(**inputs)
-    return outputs.last_hidden_state.mean(dim=1).squeeze().tolist()  # Mean pooling
+@st.cache_resource(show_spinner="Initializing ChromaDB...")
+def initialize_chromadb():
+    """Initialize ChromaDB with default embeddings"""
+    try:
+        os.makedirs(CHROMA_DB_PATH, exist_ok=True)
+        chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+        collection = chroma_client.get_or_create_collection(name="portfolio")
+        return collection
+    except Exception as e:
+        st.warning(f"⚠️ ChromaDB initialized with default embeddings: {e}")
+        return None
 
-# Function to query ChromaDB
-def query_chromadb(query_text):
+# Load models
+llm = load_llm_model()
+collection = initialize_chromadb()
+
+def query_chromadb(query_text: str) -> str:
+    """Query ChromaDB (using default embeddings)"""
     if collection is None:
         return "⚠️ ChromaDB is not available."
     try:
-        query_embedding = get_embedding(query_text)
-        results = collection.query(query_embeddings=[query_embedding], n_results=1)
-        
-        if results and results.get("documents") and results["documents"][0]:  # Extra safety check
-            return results["documents"][0]
-        return "❌ No relevant data found."
+        results = collection.query(
+            query_texts=[query_text],
+            n_results=1
+        )
+        if results and results.get("documents"):
+            return results["documents"][0][0]
+        return "❌ No matching data found."
     except Exception as e:
-        return f"⚠️ Error querying ChromaDB: {e}"
+        return f"⚠️ Query error: {e}"
 
-# Function to generate email using LangChain
-def generate_email(job_desc, candidate_details):
-    template = PromptTemplate.from_template(
-        """
-        Write a professional and personalized cold email for a job application.
-        Use the following candidate details:
-        Name: {name}
-        Email: {email}
-        Phone: {phone}
-        Address: {address}
-        LinkedIn: {linkedin}
-        GitHub: {github}
-        Education: {education}
-        Experience: {experience}
-        Skills: {skills}
+def generate_email(job_desc: str, candidate_details: Dict[str, Any]) -> str:
+    """Generate email using GPT-2"""
+    template = """
+    Write a professional cold email for this job application:
+    
+    **Candidate:**
+    - Name: {name}
+    - Education: {education}
+    - Experience: {experience}
+    - Key Skills: {skills}
+    
+    **Job Description:**
+    {job_desc}
+    
+    **Requirements:**
+    1. Address the hiring manager professionally
+    2. Highlight 2-3 most relevant skills
+    3. Show enthusiasm for the role
+    4. Keep it under 200 words
+    5. End with: "Best regards, {name}"
+    """
+    
+    prompt = PromptTemplate.from_template(template)
+    try:
+        chain = LLMChain(llm=llm, prompt=prompt)
+        response = chain.run(job_desc=job_desc, **candidate_details)
+        return response.strip()
+    except Exception as e:
+        return f"⚠️ Generation failed: {e}"
 
-        Job Description: {job_desc}
-        The email should be well-structured, engaging, and should include candidate details at the bottom of the email in a professional manner.
-        """
+def validate_inputs(job_desc: str, details: Dict[str, Any]) -> bool:
+    """Check required fields"""
+    required = [
+        job_desc,
+        details.get("name"),
+        details.get("education"),
+        details.get("experience"),
+        details.get("skills")
+    ]
+    return all(required)
+
+def main():
+    st.set_page_config(
+        page_title="📧 Cold Email Generator",
+        page_icon="✉️",
+        layout="centered"
     )
     
-    api_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
-    if not api_token:
-        st.error("❌ Missing Hugging Face API Token. Set `HUGGINGFACEHUB_API_TOKEN` in environment variables.")
-        return "API token missing."
+    st.title("📧 AI Cold Email Generator")
+    st.caption("Powered by GPT-2 (Local) + ChromaDB")
     
-    try:
-        llm = HuggingFaceHub(
-            repo_id="mistralai/Mistral-7B-Instruct-v0.3",
-            model_kwargs={"temperature": 0.7},
-            huggingfacehub_api_token=api_token
-        )
-        chain = LLMChain(llm=llm, prompt=template)
-        return chain.run(job_desc=job_desc, **candidate_details)
-    except Exception as e:
-        return f"⚠️ Error generating email: {e}"
-
-# Streamlit UI
-def main():
-    st.title("🚀 AI-Powered Cold Email Generator")
+    # Job Description
+    job_desc = st.text_area(
+        "Paste the Job Description:",
+        height=150,
+        placeholder="Example: 'We seek a Python developer with 2+ years of experience...'"
+    )
     
-    job_description = st.text_area("Enter the Job Description:")
-    
-    st.subheader("📌 Candidate Details")
-    name = st.text_input("Full Name")
-    email = st.text_input("Email")
-    phone = st.text_input("Phone Number")
-    address = st.text_input("Address")
-    linkedin = st.text_input("LinkedIn (Optional)")
-    github = st.text_input("GitHub (Optional)")
-    education = st.text_area("Education Details")
-    experience = st.text_area("Work Experience")
-    skills = st.text_area("Key Skills")
+    # Candidate Details
+    with st.expander("🧑‍💼 Your Details", expanded=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            name = st.text_input("Full Name*")
+            email = st.text_input("Email*")
+            phone = st.text_input("Phone")
+        with col2:
+            linkedin = st.text_input("LinkedIn")
+            github = st.text_input("GitHub")
+        
+        education = st.text_area("Education*", placeholder="Degree, University, Year")
+        experience = st.text_area("Experience*", placeholder="Previous roles and achievements")
+        skills = st.text_area("Skills*", placeholder="Python, SQL, Project Management...")
     
     candidate_details = {
         "name": name,
         "email": email,
-        "phone": phone,
-        "address": address,
-        "linkedin": linkedin,
-        "github": github,
+        "phone": phone or "Not provided",
+        "linkedin": linkedin or "Not provided",
+        "github": github or "Not provided",
         "education": education,
         "experience": experience,
         "skills": skills,
     }
     
-    if st.button("✨ Generate Email"):
-        if job_description and name and email and phone and education and experience and skills:
-            email_content = generate_email(job_description, candidate_details)
-            st.subheader("📩 Generated Email:")
+    # Generation Button
+    if st.button("✨ Generate Email", type="primary"):
+        if validate_inputs(job_desc, candidate_details):
+            with st.spinner("Crafting your email..."):
+                email_content = generate_email(job_desc, candidate_details)
+            
+            st.subheader("📩 Your Email Draft")
+            st.markdown("---")
             st.write(email_content)
+            st.markdown("---")
+            
+            st.download_button(
+                "💾 Download Email",
+                data=email_content,
+                file_name=f"Job_Application_{name.replace(' ', '_')}.txt",
+                mime="text/plain"
+            )
         else:
-            st.warning("⚠️ Please fill in all required fields (Job Description, Name, Email, Phone, Education, Experience, and Skills).")
+            st.warning("Please fill all required fields (*)")
 
 if __name__ == "__main__":
     main()
