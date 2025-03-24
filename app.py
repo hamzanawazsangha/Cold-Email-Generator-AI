@@ -8,15 +8,36 @@ import os
 import torch
 import pyperclip  # For clipboard copy
 from transformers import AutoModel, AutoTokenizer
+import subprocess
 
 # Load environment variables
 load_dotenv()
 HUGGINGFACE_API_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 
+# Function to check and download the model if not found
+def ensure_model_downloaded():
+    model_path = "all-MiniLM-L6-v2"
+    if not os.path.exists(model_path):
+        st.warning("Model not found. Downloading...")
+        os.makedirs(model_path, exist_ok=True)
+        try:
+            subprocess.run([
+                "wget", "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/pytorch_model.bin", "-P", model_path
+            ], check=True)
+            subprocess.run([
+                "wget", "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config.json", "-P", model_path
+            ], check=True)
+            subprocess.run([
+                "wget", "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json", "-P", model_path
+            ], check=True)
+        except subprocess.CalledProcessError as e:
+            st.error(f"Failed to download model: {e}")
+    return model_path
+
 # Load MiniLM model and tokenizer from local folder
 @st.cache_resource
 def load_model():
-    model_path = os.path.abspath("all-MiniLM-L6-v2")  # Convert to absolute path
+    model_path = ensure_model_downloaded()
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     model = AutoModel.from_pretrained(model_path)
     return tokenizer, model
@@ -31,12 +52,9 @@ model.to(device)
 collection = None
 try:
     db_path = "./chroma_db"
-    if not os.path.exists(db_path):
-        os.makedirs(db_path)  # Ensure folder exists for persistence
-
+    os.makedirs(db_path, exist_ok=True)
     chroma_client = chromadb.PersistentClient(path=db_path)
     collection = chroma_client.get_or_create_collection(name="portfolio")
-
 except Exception as e:
     st.warning(f"Could not connect to ChromaDB: {e}")
 
@@ -45,19 +63,18 @@ def get_embedding(text):
     inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512).to(device)
     with torch.no_grad():
         outputs = model(**inputs)
-    embeddings = outputs.last_hidden_state.mean(dim=1).squeeze().cpu().tolist()  # Mean pooling, move to CPU
+    embeddings = outputs.last_hidden_state.mean(dim=1).squeeze().cpu().tolist()
     return embeddings
 
 # Function to query ChromaDB
 def query_chromadb(query_text):
     if collection is None:
         return "ChromaDB is unavailable."
-
     try:
         query_embedding = get_embedding(query_text)
         results = collection.query(query_embeddings=[query_embedding], n_results=1)
         if results.get("documents") and results["documents"][0]:
-            return results["documents"][0][0]  # Extract first document
+            return results["documents"][0][0]
         return "No relevant data found."
     except Exception as e:
         return f"Error querying ChromaDB: {e}"
@@ -66,7 +83,6 @@ def query_chromadb(query_text):
 def generate_email(job_desc, candidate_details):
     if not HUGGINGFACE_API_TOKEN:
         return "Missing Hugging Face API token. Please set it in your environment variables."
-
     template = PromptTemplate.from_template(
         """
         Write a professional and personalized cold email for a job application.
@@ -85,7 +101,6 @@ def generate_email(job_desc, candidate_details):
         The email should be well-structured, engaging, and include candidate details at the bottom.
         """
     )
-
     try:
         llm = HuggingFaceHub(
             repo_id="mistralai/Mistral-7B-Instruct-v0.3",
@@ -101,9 +116,7 @@ def generate_email(job_desc, candidate_details):
 # Streamlit UI
 def main():
     st.title("AI-Powered Cold Email Generator ✉️")
-
     job_description = st.text_area("Enter the Job Description:", key="job_desc")
-
     st.subheader("Candidate Details")
     name = st.text_input("Full Name", key="name")
     email = st.text_input("Email", key="email")
@@ -114,15 +127,12 @@ def main():
     education = st.text_area("Education Details", key="education")
     experience = st.text_area("Work Experience", key="experience")
     skills = st.text_area("Key Skills", key="skills")
-
     candidate_details = {
         "name": name, "email": email, "phone": phone, "address": address,
         "linkedin": linkedin, "github": github, "education": education,
         "experience": experience, "skills": skills,
     }
-
     email_content = ""
-
     if st.button("Generate Email", key="generate_email_btn"):
         if all([job_description, name, email, phone, education, experience, skills]):
             with st.spinner("Generating email... ⏳"):
@@ -131,7 +141,6 @@ def main():
             st.text_area("", email_content, height=200, key="email_output")
         else:
             st.warning("⚠️ Please fill in all required fields.")
-
     if email_content:
         if st.button("Copy to Clipboard", key="copy_btn"):
             pyperclip.copy(email_content)
