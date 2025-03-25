@@ -53,13 +53,13 @@ streamlit run app.py
 5. Review & Download - Finalize and save the email
 
 ## Project Structure 📂
-
+```
 ├── app.py                # Main application
 ├── requirements.txt      # Dependency list
 ├── .env.example          # Environment template
 ├── assets/               # Screenshots/visuals
 └── README.md
-
+```
 ## Contributing 🤝
 - Fork the repository
 - Create your feature branch (git checkout -b feature/AmazingFeature)
