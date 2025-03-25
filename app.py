@@ -25,12 +25,16 @@ def load_models():
 
 tokenizer, model = load_models()
 
-# Initialize ChromaDB client with persistent storage
+# Initialize ChromaDB client with correct API
 try:
-    chroma_client = chromadb.PersistentClient(path="./chroma_db")
+    # Updated ChromaDB client initialization
+    chroma_client = chromadb.Client(settings=chromadb.config.Settings(
+        chroma_db_impl="duckdb+parquet",
+        persist_directory="./chroma_db"  # Optional - makes DB persistent
+    ))
     collection = chroma_client.get_or_create_collection(
         name="portfolio",
-        metadata={"hnsw:space": "cosmo"}  # Optimized for cosine similarity
+        metadata={"hnsw:space": "cosine"}  # Correct space name
     )
 except Exception as e:
     st.error(f"Database error: {e}")
@@ -64,7 +68,7 @@ def query_chromadb(query_text):
     except Exception as e:
         return f"Query error: {e}"
 
-# Enhanced email generation with safety checks
+# Rest of your code remains the same...
 def generate_email(job_desc, candidate_details):
     required_fields = ['name', 'email', 'phone', 'education', 'experience', 'skills']
     if any(not candidate_details.get(field) for field in required_fields):
@@ -106,7 +110,6 @@ def generate_email(job_desc, candidate_details):
     except Exception as e:
         return f"Generation error: {e}"
 
-# Streamlit UI with improved layout and validation
 def main():
     st.set_page_config(page_title="AI Email Generator", layout="wide")
     
