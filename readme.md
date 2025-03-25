@@ -28,3 +28,15 @@ An intelligent application that generates **personalized job application emails*
 1. Clone the repository:
 ```bash
 git clone https://github.com/hamzanawazsangha/Cold-Email-Generator-AI.git
+
+## Usage Guide 📝
+- **Enter Job Description** - Paste the complete job posting
+- **Fill Your Details** - Add your professional information
+- **Add Optional Links** - Include LinkedIn/GitHub if available
+- **Generate Email** - Get your tailored application draft
+- **Review & Download** - Finalize and save the email
+
+### Contributing 🤝
+Contributions are welcome! Please open an issue first to discuss proposed changes.
+
+Developed with ❤️ at Ezitech Institute
