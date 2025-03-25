@@ -1,12 +1,11 @@
 # AI Job Application Assistant ✉️🤖
 
 [![Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)]([https://your-app-url.streamlit.app/](https://cold-email-generator-ai.streamlit.app/))
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
 
 An intelligent application that generates **personalized job application emails** using LangChain and Mistral-7B LLM. Developed as my first LangChain project at Ezitech Institute.
 
-![App Screenshot](./assets/screenshot.png) *(Add screenshot later)*
+![App Screenshot](Cold Email Generator.jpg)
 
 ## Features ✨
 
