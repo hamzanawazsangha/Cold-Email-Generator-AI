@@ -1,137 +1,165 @@
 import streamlit as st
 import chromadb
 from langchain.chains import LLMChain
-from langchain_community.llms import HuggingFacePipeline
+from langchain_community.llms import HuggingFaceHub
 from langchain.prompts import PromptTemplate
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
-import torch
+from dotenv import load_dotenv
 import os
-from typing import Dict, Any
+import torch
+from transformers import AutoModel, AutoTokenizer
 
-# Constants (Updated for TinyLlama)
-CHROMA_DB_PATH = "/tmp/chroma_db"
-LLM_MODEL_NAME = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+# Load environment variables
+load_dotenv()
 
-# Initialize session state
-if 'model_loaded' not in st.session_state:
-    st.session_state.model_loaded = False
-
-@st.cache_resource(show_spinner="🚀 Loading TinyLlama (this takes ~2 minutes)...")
-def load_llm_model():
-    """Load and cache the TinyLlama model with Render-optimized settings"""
+# Improved model loading with error handling
+@st.cache_resource
+def load_models():
     try:
-        tokenizer = AutoTokenizer.from_pretrained(LLM_MODEL_NAME)
-        model = AutoModelForCausalLM.from_pretrained(
-            LLM_MODEL_NAME,
-            torch_dtype=torch.float16,
-            low_cpu_mem_usage=True  # Critical for Render's memory limits
-        )
-        pipe = pipeline(
-            "text-generation",
-            model=model,
-            tokenizer=tokenizer,
-            max_new_tokens=300,
-            temperature=0.7,
-            top_p=0.9,
-            device_map="auto"
-        )
-        st.session_state.model_loaded = True
-        return HuggingFacePipeline(pipeline=pipe)
+        model_path = "./all-MiniLM-L6-v2"
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
+        model = AutoModel.from_pretrained(model_path)
+        return tokenizer, model
     except Exception as e:
-        st.error(f"❌ Model loading failed: {str(e)[:200]}...")
+        st.error(f"Error loading models: {e}")
         st.stop()
 
-@st.cache_resource(show_spinner="🔧 Setting up ChromaDB...")
-def initialize_chromadb():
-    """Initialize ChromaDB with default settings"""
+tokenizer, model = load_models()
+
+# Initialize ChromaDB client with persistent storage
+try:
+    chroma_client = chromadb.PersistentClient(path="./chroma_db")
+    collection = chroma_client.get_or_create_collection(
+        name="portfolio",
+        metadata={"hnsw:space": "cosmo"}  # Optimized for cosine similarity
+    )
+except Exception as e:
+    st.error(f"Database error: {e}")
+    st.stop()
+
+# Improved embedding function with caching
+@st.cache(show_spinner=False)
+def get_embedding(text):
     try:
-        os.makedirs(CHROMA_DB_PATH, exist_ok=True)
-        client = chromadb.PersistentClient(
-            path=CHROMA_DB_PATH,
-            settings=chromadb.Settings(anonymized_telemetry=False)
-        return client.get_or_create_collection("portfolio")
+        inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
+        with torch.no_grad():
+            outputs = model(**inputs)
+        return outputs.last_hidden_state.mean(dim=1).squeeze().tolist()
     except Exception as e:
-        st.warning(f"⚠️ ChromaDB initialization warning: {str(e)[:200]}...")
+        st.error(f"Embedding generation failed: {e}")
         return None
 
-def generate_email(job_desc: str, candidate_details: Dict[str, Any]) -> str:
-    """Generate email using TinyLlama with enhanced prompt engineering"""
-    template = """[INST] Write a professional job application email:
-    **Candidate Details:**
-    - Name: {name}
-    - Education: {education}
-    - Experience: {experience}
-    - Skills: {skills}
-    
-    **Job Description:**
-    {job_desc}
-    
-    **Requirements:**
-    1. Address hiring manager properly
-    2. Highlight 2-3 relevant skills
-    3. Keep under 250 words
-    4. Professional closing [/INST]"""
-    
+# Enhanced query function with error handling
+def query_chromadb(query_text):
     try:
-        prompt = PromptTemplate.from_template(template)
-        chain = LLMChain(
-            llm=load_llm_model(),
-            prompt=prompt,
-            verbose=False
+        query_embedding = get_embedding(query_text)
+        if not query_embedding:
+            return "Error generating embeddings"
+        
+        results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=1,
+            include=["documents", "distances"]
         )
-        return chain.run(job_desc=job_desc, **candidate_details)[:1500]  # Output cap
+        return results["documents"][0][0] if results["documents"] else "No relevant data found."
     except Exception as e:
-        return f"⚠️ Generation error: {str(e)[:200]}..."
+        return f"Query error: {e}"
 
+# Enhanced email generation with safety checks
+def generate_email(job_desc, candidate_details):
+    required_fields = ['name', 'email', 'phone', 'education', 'experience', 'skills']
+    if any(not candidate_details.get(field) for field in required_fields):
+        return "Missing required candidate details"
+
+    template = PromptTemplate.from_template("""
+        Generate a professional cold email for a job application using these details:
+        Applicant: {name}
+        Contact: {email} | {phone} | {address}
+        Links: {linkedin} | {github}
+        Education: {education}
+        Experience: {experience}
+        Skills: {skills}
+
+        Job Description: {job_desc}
+
+        Structure:
+        - Personalized greeting
+        - Brief introduction
+        - Key qualifications matching job requirements
+        - Specific examples of relevant achievements
+        - Polite call to action
+        - Professional signature with contact info
+        Keep it under 300 words.
+    """)
+
+    try:
+        llm = HuggingFaceHub(
+            repo_id="mistralai/Mistral-7B-Instruct-v0.3",
+            model_kwargs={
+                "temperature": 0.7,
+                "max_new_tokens": 500,
+                "repetition_penalty": 1.2
+            },
+            huggingfacehub_api_token=os.getenv("HUGGINGFACEHUB_API_TOKEN")
+        )
+        chain = LLMChain(llm=llm, prompt=template)
+        return chain.run(job_desc=job_desc, **candidate_details)
+    except Exception as e:
+        return f"Generation error: {e}"
+
+# Streamlit UI with improved layout and validation
 def main():
-    st.set_page_config(
-        page_title="📧 Professional Email Generator",
-        page_icon="✉️",
-        layout="centered"
-    )
+    st.set_page_config(page_title="AI Email Generator", layout="wide")
     
-    st.title("📧 AI-Powered Job Application Assistant")
-    st.caption("Powered by TinyLlama 1.1B + ChromaDB")
+    with st.sidebar:
+        st.header("Configuration")
+        st.info("Ensure your Hugging Face API token is set in environment variables")
     
-    # Job Description Input
-    job_desc = st.text_area(
-        "Paste the Job Description:",
-        height=150,
-        placeholder="Example: 'Seeking a Python developer with web development experience...'"
-    )
-    
-    # Candidate Details
-    with st.expander("🧑💼 Applicant Details", expanded=True):
-        name = st.text_input("Full Name*")
-        email = st.text_input("Email*")
-        education = st.text_area("Education*", placeholder="Degree, Institution, Year")
-        experience = st.text_area("Experience*", placeholder="Previous roles and achievements")
-        skills = st.text_area("Key Skills*", placeholder="Python, SQL, Communication...")
-    
+    st.title("📧 AI-Powered Job Application Email Generator")
+    st.markdown("---")
+
+    with st.expander("🔍 Job Description", expanded=True):
+        job_description = st.text_area("Paste the job description here:", height=150)
+
+    with st.expander("👤 Candidate Details"):
+        cols = st.columns(2)
+        with cols[0]:
+            name = st.text_input("Full Name*")
+            email = st.text_input("Email*")
+            phone = st.text_input("Phone*")
+            address = st.text_input("Address")
+        with cols[1]:
+            linkedin = st.text_input("LinkedIn URL")
+            github = st.text_input("GitHub URL")
+            education = st.text_area("Education*")
+            experience = st.text_area("Experience*")
+            skills = st.text_area("Skills*")
+
+    candidate_details = {
+        "name": name, "email": email, "phone": phone, "address": address,
+        "linkedin": linkedin, "github": github, "education": education,
+        "experience": experience, "skills": skills
+    }
+
     if st.button("✨ Generate Email", type="primary"):
-        if not all([job_desc, name, email, education, experience, skills]):
+        if not job_description:
+            st.warning("Please enter a job description")
+        elif any(not candidate_details[field] for field in ['name', 'email', 'phone', 'education', 'experience', 'skills']):
             st.warning("Please fill all required fields (*)")
         else:
-            with st.spinner("Crafting your application (may take 30-60 seconds)..."):
-                candidate_details = {
-                    "name": name,
-                    "education": education,
-                    "experience": experience,
-                    "skills": skills
-                }
-                email_content = generate_email(job_desc, candidate_details)
+            with st.spinner("Generating email..."):
+                email_content = generate_email(job_description, candidate_details)
                 
-                st.subheader("📩 Your Custom Email Draft")
-                st.markdown("---")
-                st.write(email_content)
-                st.markdown("---")
-                
-                st.download_button(
-                    "💾 Download Email",
-                    data=email_content,
-                    file_name=f"Job_Application_{name.replace(' ', '_')}.txt",
-                    mime="text/plain"
-                )
+            st.markdown("---")
+            st.subheader("Generated Email")
+            with st.container(border=True):
+                st.markdown(email_content)
+            
+            st.download_button(
+                label="📥 Download Email",
+                data=email_content,
+                file_name="generated_email.txt",
+                mime="text/plain"
+            )
 
 if __name__ == "__main__":
     main()
