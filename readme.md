@@ -28,15 +28,23 @@ An intelligent application that generates **personalized job application emails*
 1. Clone the repository:
 ```bash
 git clone https://github.com/hamzanawazsangha/Cold-Email-Generator-AI.git
+```
 2. Navigate to project directory:
+```bash
 cd Cold-Email-Generator-AI
+```
 3. Install dependencies:
+```bash
 pip install -r requirements.txt
+```
 4. Create .env file:
+```bash
 HUGGINGFACEHUB_API_TOKEN=your_api_token_here
+```
 5. Run the app:
+```bash
 streamlit run app.py
-
+```
 ## Usage Guide 📝
 1. Enter Job Description - Paste the complete job posting
 2. Fill Your Details - Add your professional information
