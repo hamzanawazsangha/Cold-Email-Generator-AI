@@ -5,8 +5,6 @@
 
 An intelligent application that generates **personalized job application emails** using LangChain and Mistral-7B LLM. Developed as my first LangChain project at Ezitech Institute.
 
-![App Screenshot](./Cold Email Generator.jpg) 
-
 ## Features ✨
 
 - **AI-Powered Email Generation** - Creates tailored emails based on job descriptions
@@ -59,7 +57,6 @@ streamlit run app.py
 ├── app.py                # Main application
 ├── requirements.txt      # Dependency list
 ├── .env.example          # Environment template
-├── assets/               # Screenshots/visuals
 └── README.md
 ```
 ## Contributing 🤝
