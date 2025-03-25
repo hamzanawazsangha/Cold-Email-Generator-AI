@@ -5,8 +5,6 @@
 
 An intelligent application that generates **personalized job application emails** using LangChain and Mistral-7B LLM. Developed as my first LangChain project at Ezitech Institute.
 
-![App Screenshot](/Cold Email Generator.jpg)
-
 ## Features ✨
 
 - **AI-Powered Email Generation** - Creates tailored emails based on job descriptions
@@ -29,4 +27,4 @@ An intelligent application that generates **personalized job application emails*
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/job-application-assistant.git
+git clone https://github.com/hamzanawazsangha/Cold-Email-Generator-AI.git
