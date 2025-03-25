@@ -19,6 +19,10 @@ st.set_page_config(
 # Custom CSS for better styling
 st.markdown("""
     <style>
+    .optional-field {
+        color: #666666;
+        font-style: italic;
+    }
     .stTextArea [data-baseweb=base-input] {
         background-color: #f8f9fa;
     }
@@ -51,6 +55,17 @@ def validate_inputs(job_desc, candidate_details):
 
 def generate_email(job_desc, candidate_details):
     """Generate professional email using LLM"""
+    # Build optional fields string
+    optional_fields = []
+    if candidate_details.get('address'):
+        optional_fields.append(f"Address: {candidate_details['address']}")
+    if candidate_details.get('linkedin'):
+        optional_fields.append(f"LinkedIn: {candidate_details['linkedin']}")
+    if candidate_details.get('github'):
+        optional_fields.append(f"GitHub: {candidate_details['github']}")
+    
+    optional_fields_str = "\n    ".join(optional_fields) if optional_fields else "None provided"
+
     template = """You are a professional career coach. Write a compelling cold email for a job application using these details:
 
     Candidate Information:
@@ -59,6 +74,9 @@ def generate_email(job_desc, candidate_details):
     - Education: {education}
     - Experience: {experience}
     - Key Skills: {skills}
+    
+    Additional Details:
+    {optional_fields}
 
     Job Description:
     {job_desc}
@@ -70,9 +88,13 @@ def generate_email(job_desc, candidate_details):
     4. Second paragraph: Most relevant qualifications (match 2-3 skills from JD)
     5. Third paragraph: Unique value proposition
     6. Closing: Call to action and appreciation
-    7. Professional signature with contact info
+    7. Include links to LinkedIn/GitHub if provided
+    8. Professional signature with contact info
 
-    Avoid generic phrases - be specific about how your skills match their needs.
+    Important:
+    - Never make up information not provided by the candidate
+    - For links, use markdown formatting: [LinkedIn](url)
+    - If GitHub is provided, mention relevant projects
     """
 
     try:
@@ -89,7 +111,8 @@ def generate_email(job_desc, candidate_details):
         
         prompt = PromptTemplate(
             template=template,
-            input_variables=["job_desc", "name", "email", "phone", "education", "experience", "skills"]
+            input_variables=["job_desc", "name", "email", "phone", "education", 
+                           "experience", "skills", "optional_fields"]
         )
         
         chain = LLMChain(llm=llm, prompt=prompt)
@@ -97,7 +120,8 @@ def generate_email(job_desc, candidate_details):
         with st.spinner("Crafting your perfect application email..."):
             response = chain.run(
                 job_desc=job_desc,
-                **candidate_details
+                optional_fields=optional_fields_str,
+                **{k: v for k, v in candidate_details.items() if k not in ['address', 'linkedin', 'github']}
             )
         
         # Post-process the response
@@ -115,9 +139,10 @@ def main():
     with st.expander("ℹ️ How to use this tool", expanded=True):
         st.write("""
         1. Paste the job description
-        2. Fill in your details
-        3. Click 'Generate Email'
-        4. Review and download the result
+        2. Fill in your details (required fields marked with *)
+        3. Add optional info like LinkedIn/GitHub if available
+        4. Click 'Generate Email'
+        5. Review and download the result
         """)
 
     # Main form
@@ -137,12 +162,22 @@ def main():
             name = st.text_input("Full Name*")
             email = st.text_input("Email Address*")
             phone = st.text_input("Phone Number*")
+            address = st.text_input("Address", help="Optional mailing address")
         
         with col2:
             education = st.text_area("Education Background*", height=100)
             experience = st.text_area("Professional Experience*", height=100)
             skills = st.text_area("Key Skills*", height=100, 
                                 help="List your most relevant skills for this position")
+        
+        # Optional fields section
+        st.subheader("Optional Information", help="These will make your application more compelling")
+        linkedin = st.text_input("LinkedIn Profile URL", 
+                                placeholder="https://linkedin.com/in/yourprofile",
+                                help="Will be included in your signature")
+        github = st.text_input("GitHub Profile URL", 
+                             placeholder="https://github.com/yourusername",
+                             help="Mentioned if relevant to the position")
 
         submitted = st.form_submit_button("✨ Generate Email", type="primary")
 
@@ -152,9 +187,12 @@ def main():
             "name": name,
             "email": email,
             "phone": phone,
+            "address": address,
             "education": education,
             "experience": experience,
-            "skills": skills
+            "skills": skills,
+            "linkedin": linkedin,
+            "github": github
         }
 
         # Validate inputs
@@ -185,10 +223,10 @@ def main():
                 # Improvement suggestions
                 with st.expander("💡 Tips for Improvement"):
                     st.write("""
-                    - Personalize the opening line if possible
-                    - Add 1-2 specific achievements that match the job requirements
-                    - Double-check all contact information
-                    - Consider adding a portfolio link if relevant
+                    - **Personalization**: Add a specific reason why you're excited about this company
+                    - **Achievements**: Include 1-2 metrics from your experience
+                    - **Links**: Double-check your LinkedIn/GitHub URLs
+                    - **Follow-up**: Mention when you'll follow up (e.g., 'I'll reach out next Thursday')
                     """)
 
 if __name__ == "__main__":
